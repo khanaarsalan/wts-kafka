@@ -1,34 +1,36 @@
-const { Kafka, KafkaJSGroupCoordinatorNotFound } =  require('kafkajs')
+const { Kafka } =  require('kafkajs')
 const events = require('events');
-const { readSync } = require('fs');
-const UUIDv4 = require('uuid/v4') 
 const eventEmitter = new events.EventEmitter();
 
-class WTKAFKA extends Kafka{
-    constructor({clientId, brokers, topic, defaultPartition, defaultConsumerGroupId, isFifo}) {
-        super({clientId: clientId, brokers: brokers})
+// default_consumer_group_id is used if no consumer_group_id is given for initializing a consumer
+const DEFAULT_CONSUMER_GROUP_ID = 'test-group';
+
+// default partition to use for your messages
+const DEAULT_PARTITION = 'test'
+
+class WTKAFKA{
+    constructor({clientId, brokers, topic, partition, consumerGroupId, isFifo}) {
+        this.kafka = new Kafka({clientId: clientId, brokers: brokers})
         this.topic = topic
-        this.defaultPartition = defaultPartition
-        this.defaultConsumerGroupId = defaultConsumerGroupId
+        this.partition = partition
+        this.consumerGroupId = consumerGroupId
         this.isFifo = isFifo
     }
     
     
-    async enqueueOne(payload, { messageKey, topic, partition } = {}, producerOptions = {}) {
+    async enqueueOne(payload, messageKey = 'key', producerOptions = {}) {
         try {
             if (payload === undefined) throw new Error('payload is required')
             console.log(this.kafka)
-            const producer = super.producer(producerOptions)
+            const producer = this.kafka.producer(producerOptions)
             const jsonPayload = JSON.stringify(payload) 
-            const msgKey = messageKey
-            const msgTopic = topic || this.topic
-            const msgPartition = this.isFifo ? this.defaultPartition || partition || UUIDv4() : undefined
+            const msgPartition = this.isFifo ? this.partition || DEAULT_PARTITION : undefined
             console.log(`connecting to the kafka broker`)
             await producer.connect()
             console.log(`producer is connected..`)
             await producer.send({
-                topic: msgTopic,
-                messages: [{key: msgKey, value: jsonPayload, partition: msgPartition}],
+                topic: this.topic,
+                messages: [{key: messageKey, value: jsonPayload, partition: msgPartition}],
             })
             console.log(`message send successfully.`)
             await producer.disconnect()
@@ -37,19 +39,17 @@ class WTKAFKA extends Kafka{
         }
     }
 
-    async enqueueMany(payloads, { messageKey, topic, partition } = {}, producerOptions = {}) {
+    async enqueueMany(payloads, messageKey = 'key', producerOptions = {}) {
         try{ 
             if (!(payloads instanceof Array)) throw new Error('payloads must be of type array')
             if (payloads.length === 0) return
-            const producer = super.producer(producerOptions)
-            const msgTopic = topic || this.topic
+            const producer = this.kafka.producer(producerOptions)
             const entries = payloads.map(payload => {
                 const jsonPayload = JSON.stringify(payload)
-                const msgKey = messageKey
-                const msgPartition = this.isFifo ? this.defaultPartition || partition || UUIDv4() : undefined
+                const msgPartition = this.isFifo ? this.defaultPartition || DEAULT_PARTITION : undefined
 
                 return {
-                    key: msgKey, 
+                    key: messageKey, 
                     value: jsonPayload, 
                     partition: msgPartition
                 }
@@ -59,7 +59,7 @@ class WTKAFKA extends Kafka{
             await producer.connect()
             console.log(`producer is connected..`)
             await producer.send({
-                topic: msgTopic,
+                topic: this.topic,
                 messages: entries,
             })
             console.log(`message send successfully.`)
@@ -70,15 +70,15 @@ class WTKAFKA extends Kafka{
 
     }
 
-    async popOne({topic, groupId} ={} , consumerOptions = {}) {
-       const result = await this.popMany(1, {topic, groupId}, consumerOptions)
+    async popOne(consumerOptions = {}) {
+       const result = await this.popMany(1, consumerOptions)
        return result
     }
 
-    async popMany(noOfMessages, {topic, groupId} = {}, consumerOptions = {}) {
+    async popMany(noOfMessages, consumerOptions = {}) {
         if (noOfMessages === undefined) throw new Error('no of messages is required')
-        const consumerGroupId = this.defaultGroupId || groupId
-        const consumer = super.consumer({groupId: consumerGroupId, ...consumerOptions})
+        const consumerGroupId = this.consumerGroupId || DEFAULT_CONSUMER_GROUP_ID
+        const consumer = this.kafka.consumer({groupId: consumerGroupId, ...consumerOptions})
         console.log('connecting....')
         await consumer.connect()
 
@@ -141,15 +141,15 @@ class WTKAFKA extends Kafka{
         return messages
     }
 
-    async seekOne({topic, groupId} = {}, consumerOptions = {}) {
-        const results = await this.seekMany(1, {topic, groupId}, consumerOptions)
+    async seekOne(consumerOptions = {}) {
+        const results = await this.seekMany(1, consumerOptions)
         return results
     }
 
     async seekMany(messagesToRead, {topic, groupId} = {}, consumerOptions = {}){
         if (messagesToRead === undefined ) throw new Error('no of messages is required')
-        const consumerGroupId = this.defaultGroupId || groupId
-        const consumer = super.consumer({groupId: consumerGroupId, ...consumerOptions})
+        const consumerGroupId = this.consumerGroupId || DEFAULT_CONSUMER_GROUP_ID
+        const consumer = this.kafka.consumer({groupId: consumerGroupId, ...consumerOptions})
         console.log('connecting....')
         await consumer.connect()
 
@@ -194,21 +194,6 @@ class WTKAFKA extends Kafka{
         await consumer.subscribe({topic: this.topic || topic, fromBeginning: true})
         const messages = await seekMessages(consumer, messagesToRead)
         return messages
-    }
-
-    async function markAsRead(message) {
-        const consumer = super.({groupId: consumerGroupId})
-        console.log('connecting....')
-        await consumer.connect()
-        consumerGroup = new ConsumerGroup({
-            logger: newLogger(),
-            topics: ['topic1'],
-            cluster: {},
-          })
-          
-          const offsets = { topics: [{ partitions: [{ offset: '0', partition: 0 }] }] }
-          await consumerGroup.commitOffsets(offsets)
-
     }
 
 }
